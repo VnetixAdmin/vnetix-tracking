@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>VNETIX Field Service – Track Your Technician</title>
+
+  <!-- Leaflet map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:   #0f2340;
+      --blue:   #1a3a5c;
+      --accent: #e85d26;
+      --green:  #16a34a;
+      --amber:  #d97706;
+      --text:   #1e293b;
+      --muted:  #64748b;
+      --border: #e2e8f0;
+      --card:   #ffffff;
+      --bg:     #f1f5f9;
+      --radius: 12px;
+    }
+
+    html, body { height: 100%; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+    /* Header */
+    .header {
+      background: var(--navy);
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.3);
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+    }
+    .header-logo {
+      width: 38px; height: 38px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; color: #fff; font-weight: 800; flex-shrink: 0;
+    }
+    .header-title { color: #fff; font-size: 15px; font-weight: 700; line-height: 1.2; }
+    .header-sub   { color: #94a3b8; font-size: 11px; margin-top: 1px; }
+
+    /* Status bar */
+    .status-bar {
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      transition: background .4s;
+    }
+    .status-bar.traveling   { background: #dbeafe; color: #1d4ed8; }
+    .status-bar.arrived     { background: #dcfce7; color: #15803d; }
+    .status-bar.completed   { background: #f0fdf4; color: #15803d; }
+    .status-bar.loading     { background: #fef9c3; color: #92400e; }
+    .status-bar.unavailable { background: #f1f5f9; color: #64748b; }
+    .status-bar.expired     { background: #fee2e2; color: #b91c1c; }
+
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .status-bar.traveling   .status-dot { background: #2563eb; animation: statusPulse 1.5s infinite; }
+    .status-bar.arrived     .status-dot { background: #16a34a; }
+    .status-bar.completed   .status-dot { background: #16a34a; }
+    .status-bar.loading     .status-dot { background: #d97706; animation: statusPulse 1.5s infinite; }
+    .status-bar.unavailable .status-dot { background: #94a3b8; }
+    .status-bar.expired     .status-dot { background: #dc2626; }
+
+    @keyframes statusPulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50%       { transform: scale(1.3); opacity: .7; }
+    }
+    .status-right { margin-left: auto; font-size: 11px; font-weight: 400; color: inherit; opacity: .8; }
+
+    /* Map */
+    #map {
+      width: 100%;
+      height: calc(100vh - 56px - 42px - 140px);
+      min-height: 260px;
+      max-height: 520px;
+    }
+
+    /* Info cards */
+    .cards {
+      padding: 14px 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    @media (min-width: 480px) { .cards { grid-template-columns: repeat(3, 1fr); } }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .card-label { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+    .card-value { font-size: 15px; font-weight: 700; color: var(--text); }
+    .card-value.green { color: var(--green); }
+    .card-value.blue  { color: #2563eb; }
+    .card-value.amber { color: var(--amber); }
+    .card-value.muted { color: var(--muted); font-weight: 500; font-size: 13px; }
+    .card-value.red   { color: #dc2626; }
+
+    /* Full-page message screen */
+    .msg-screen {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 40px 24px;
+      min-height: calc(100vh - 56px - 42px - 140px);
+    }
+    .msg-screen.show { display: flex; }
+    .msg-icon  { font-size: 72px; margin-bottom: 20px; }
+    .msg-title { font-size: 22px; font-weight: 800; color: var(--navy); margin-bottom: 10px; }
+    .msg-text  { font-size: 15px; color: var(--muted); line-height: 1.7; max-width: 320px; }
+    .msg-badge {
+      margin-top: 20px;
+      display: inline-block;
+      padding: 8px 20px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .msg-badge.green { background: #dcfce7; color: #15803d; }
+    .msg-badge.grey  { background: #e2e8f0; color: #475569; }
+
+    /* Arrived overlay */
+    .overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(15,35,64,.85);
+      z-index: 2000;
+      align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .overlay.show { display: flex; }
+    .overlay-card {
+      background: #fff;
+      border-radius: 20px;
+      padding: 36px 28px;
+      text-align: center;
+      max-width: 340px;
+      width: 100%;
+      box-shadow: 0 24px 60px rgba(0,0,0,.35);
+    }
+    .overlay-icon  { font-size: 56px; margin-bottom: 16px; }
+    .overlay-title { font-size: 22px; font-weight: 800; color: var(--navy); margin-bottom: 8px; }
+    .overlay-text  { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    .overlay-close {
+      margin-top: 24px;
+      background: var(--green);
+      color: #fff;
+      border: none; border-radius: 8px;
+      padding: 12px 28px;
+      font-size: 14px; font-weight: 600;
+      cursor: pointer; width: 100%;
+    }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted);
+      padding: 10px 16px 18px;
+    }
+
+    /* ── TECHNICIAN MAP MARKER ───────────────────────────────────
+       Replaces the plain blue dot.
+       Shape: circular badge (dark navy, white border, ripple glow)
+       with a person/hard-hat SVG icon inside, sitting on a
+       teardrop tail — clearly a "field worker" pin.
+    ── */
+    @keyframes ripple {
+      0%   { box-shadow: 0 0 0 0    rgba(37,99,235,.65); }
+      70%  { box-shadow: 0 0 0 16px rgba(37,99,235,0);   }
+      100% { box-shadow: 0 0 0 0    rgba(37,99,235,0);   }
+    }
+
+    .tech-pin {
+      width: 44px;
+      height: 54px;
+      position: relative;
+      /* no background here — all decoration is in children */
+    }
+
+    .tech-pin-circle {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #1a3a5c 0%, #0f2340 100%);
+      border: 3px solid #ffffff;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 3px 10px rgba(0,0,0,.35);
+      animation: ripple 2s ease-out infinite;
+      position: relative; z-index: 1;
+      overflow: hidden;
+    }
+
+    /* Teardrop tail below the circle */
+    .tech-pin-tail {
+      position: absolute;
+      bottom: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 0; height: 0;
+      border-left:  10px solid transparent;
+      border-right: 10px solid transparent;
+      border-top:   14px solid #0f2340;
+      /* nudge tail flush against circle */
+      margin-top: -3px;
+    }
+
+    /* Technician person SVG inside circle */
+    .tech-pin-circle svg {
+      width: 24px; height: 24px;
+      fill: #ffffff;
+      flex-shrink: 0;
+    }
+
+    /* ── CUSTOMER / COMPANY LOCATION MARKER ──────────────────────
+       Static pin (no ripple/animation) showing the service address,
+       using the accent orange to visually differentiate it from
+       the navy technician marker. Icon is a generic building glyph
+       so it reads as "company / customer premises", not a home.
+    ── */
+    .cust-pin {
+      width: 40px;
+      height: 50px;
+      position: relative;
+    }
+
+    .cust-pin-circle {
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #f2794a 0%, #e85d26 100%);
+      border: 3px solid #ffffff;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 3px 10px rgba(0,0,0,.35);
+      position: relative; z-index: 1;
+      overflow: hidden;
+    }
+
+    .cust-pin-tail {
+      position: absolute;
+      bottom: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 0; height: 0;
+      border-left:  9px solid transparent;
+      border-right: 9px solid transparent;
+      border-top:   13px solid #e85d26;
+      margin-top: -3px;
+    }
+
+    .cust-pin-circle svg {
+      width: 20px; height: 20px;
+      fill: #ffffff;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-logo">V</div>
+  <div>
+    <div class="header-title">VNETIX Field Service</div>
+    <div class="header-sub">Live Technician Tracking</div>
+  </div>
+</div>
+
+<!-- Status bar -->
+<div class="status-bar loading" id="statusBar">
+  <div class="status-dot"></div>
+  <span id="statusText">Connecting to tracking service…</span>
+  <span class="status-right" id="statusRight"></span>
+</div>
+
+<!-- Map -->
+<div id="map"></div>
+
+<!-- Full-page message screen -->
+<div class="msg-screen" id="msgScreen">
+  <div class="msg-icon"  id="msgIcon">⏳</div>
+  <div class="msg-title" id="msgTitle">Please wait</div>
+  <div class="msg-text"  id="msgText"></div>
+  <span class="msg-badge grey" id="msgBadge" style="display:none"></span>
+</div>
+
+<!-- Info cards -->
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Status</div>
+    <div class="card-value" id="cardStatus">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Last Updated</div>
+    <div class="card-value muted" id="cardUpdated">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Work Order</div>
+    <div class="card-value muted" id="cardWO">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Technician</div>
+    <div class="card-value muted" id="cardTechName">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Mobile</div>
+    <div class="card-value muted" id="cardTechMobile">—</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Distance Remaining</div>
+    <div class="card-value blue" id="cardRouteDistance">—</div>
+  </div>
+</div>
+
+<div class="footer">
+  Powered by VNETIX Field Service
+</div>
+
+<!-- Arrived overlay -->
+<div class="overlay" id="arrivedOverlay">
+  <div class="overlay-card">
+    <div class="overlay-icon">✅</div>
+    <div class="overlay-title">Technician Has Arrived!</div>
+    <div class="overlay-text">
+      Your technician has checked in at the service location.<br/>
+      Live tracking has ended for this visit.
+    </div>
+    <button class="overlay-close" onclick="document.getElementById('arrivedOverlay').classList.remove('show')">
+      Got it
+    </button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════════════
+const CONFIG = {
+  azureFunctionUrl: "https://fieldservicetracking-hbgwhvehhkhfdzhq.southindia-01.azurewebsites.net/api/GetTracking",
+  pollIntervalMs: 30000,
+  defaultCenter: [17.6868, 83.2185],
+  defaultZoom: 13,
+  // Free public OSRM demo routing server — no API key required.
+  osrmUrl: "https://router.project-osrm.org/route/v1/driving/"
+};
+
+const STATUS = {
+  TRAVELLING:        1,
+  INACTIVE:          2,
+  IN_PROGRESS:       351580002,
+  REVISIT_REQUESTED: 351580001,
+  COMPLETED:         351580003,
+  NONE:              477730001
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  TOKEN
+// ═══════════════════════════════════════════════════════════════
+const params = new URLSearchParams(window.location.search);
+const TOKEN  = params.get("token") || "";
+
+// ═══════════════════════════════════════════════════════════════
+//  MAP
+// ═══════════════════════════════════════════════════════════════
+const map = L.map("map", {
+  center: CONFIG.defaultCenter,
+  zoom:   CONFIG.defaultZoom,
+  zoomControl: true,
+  scrollWheelZoom: true
+});
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: "&copy; OpenStreetMap contributors",
+  maxZoom: 19
+}).addTo(map);
+
+// ── Technician marker icon ─────────────────────────────────────
+// Person-with-hard-hat SVG (Material Design "engineering" person).
+// Swapped inside the navy circular badge pin defined in CSS above.
+const TECH_ICON_SVG =
+  '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M12 15C7.58 15 4 16.79 4 19V21H20V19C20 16.79 16.42 15 12 15ZM8 9C8 10.0609 8.42143 11.0783 9.17157 11.8284C9.92172 12.5786 10.9391 13 12 13C13.0609 13 14.0783 12.5786 14.8284 11.8284C15.5786 11.0783 16 10.0609 16 9H8ZM11.5 2C11.2 2 11 2.21 11 2.5V5.5H10V3C10 3 7.75 3.86 7.75 6.75C7.75 6.75 7 6.89 7 8H17C16.95 6.89 16.25 6.75 16.25 6.75C16.25 3.86 14 3 14 3V5.5H13V2.5C13 2.21 12.81 2 12.5 2H11.5Z"/>' +
+  '</svg>';
+
+const techIcon = L.divIcon({
+  className: "",   // no default leaflet styles
+  html:
+    '<div class="tech-pin">' +
+      '<div class="tech-pin-circle">' + TECH_ICON_SVG + '</div>' +
+      '<div class="tech-pin-tail"></div>' +
+    '</div>',
+  iconSize:   [44, 54],
+  iconAnchor: [22, 54],   // tip of tail = ground anchor point
+  popupAnchor:[0, -56]
+});
+
+// ── Customer / company location marker icon ────────────────────
+// Generic building glyph — represents customer premises or a
+// company office, not specifically a "home".
+const CUST_ICON_SVG =
+  '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M4 21V3h9v4h7v14H4zm2-2h5v-2H6v2zm0-4h5v-2H6v2zm0-4h5V9H6v2zm7 8h5v-2h-5v2zm0-4h5v-2h-5v2zm0-4h5V9h-5v2z"/>' +
+  '</svg>';
+
+const custIcon = L.divIcon({
+  className: "",
+  html:
+    '<div class="cust-pin">' +
+      '<div class="cust-pin-circle">' + CUST_ICON_SVG + '</div>' +
+      '<div class="cust-pin-tail"></div>' +
+    '</div>',
+  iconSize:   [40, 50],
+  iconAnchor: [20, 50],
+  popupAnchor:[0, -52]
+});
+
+let techMarker      = null;
+let custMarker      = null;
+let custPlaced      = false;
+let mapCentred      = false;
+let pollTimer       = null;
+let finalised       = false;
+let wasLive         = false;
+
+// ── Route line state ────────────────────────────────────────────
+let routeLine         = null;
+let lastRouteTechLat  = null;
+let lastRouteTechLng  = null;
+let routeFetchBusy    = false;
+
+// ═══════════════════════════════════════════════════════════════
+//  SHOW / HIDE MAP vs MESSAGE SCREEN
+// ═══════════════════════════════════════════════════════════════
+function showMap() {
+  document.getElementById("map").style.display = "";
+  document.getElementById("msgScreen").classList.remove("show");
+  setTimeout(() => { if (map) map.invalidateSize(); }, 150);
+}
+
+function showMessage(icon, title, text, badgeText, badgeClass) {
+  document.getElementById("map").style.display = "none";
+  const ms = document.getElementById("msgScreen");
+  ms.classList.add("show");
+  document.getElementById("msgIcon").textContent  = icon;
+  document.getElementById("msgTitle").textContent = title;
+  document.getElementById("msgText").textContent  = text;
+  const badge = document.getElementById("msgBadge");
+  if (badgeText) {
+    badge.textContent   = badgeText;
+    badge.className     = "msg-badge " + (badgeClass || "grey");
+    badge.style.display = "inline-block";
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CUSTOMER LOCATION MARKER
+// ═══════════════════════════════════════════════════════════════
+function placeCustomerMarker(data) {
+  const custLat = parseFloat(data.CustomerLatitude);
+  const custLng = parseFloat(data.CustomerLongitude);
+
+  if (isNaN(custLat) || isNaN(custLng) || custLat === 0 || custLng === 0) return;
+
+  if (custMarker) {
+    custMarker.setLatLng([custLat, custLng]);
+  } else {
+    custMarker = L.marker([custLat, custLng], { icon: custIcon, zIndexOffset: 500 })
+      .addTo(map)
+      .bindPopup("<b>Service Location</b><br/>Customer address");
+  }
+  custPlaced = true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ROUTE LINE (shortest path, technician → customer)
+//  Uses the free OSRM public routing server. Recalculated on every
+//  poll cycle where the technician has moved meaningfully, so the
+//  line automatically shortens as he nears the customer, lengthens
+//  if he moves away, and reshapes if he takes a different road.
+// ═══════════════════════════════════════════════════════════════
+async function updateRoute(techLat, techLng, custLat, custLng) {
+  if (routeFetchBusy) return;
+
+  // Skip re-fetching if technician hasn't moved meaningfully (~20m) since last route calc
+  if (lastRouteTechLat !== null && routeLine) {
+    const moved =
+      Math.abs(lastRouteTechLat - techLat) > 0.0002 ||
+      Math.abs(lastRouteTechLng - techLng) > 0.0002;
+    if (!moved) return;
+  }
+
+  routeFetchBusy = true;
+  try {
+    const url = `${CONFIG.osrmUrl}${techLng},${techLat};${custLng},${custLat}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    if (!res.ok) { routeFetchBusy = false; return; }
+    const data = await res.json();
+    if (!data.routes || !data.routes.length) { routeFetchBusy = false; return; }
+
+    const coords = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+    const distanceKm = (data.routes[0].distance / 1000).toFixed(2);
+
+    if (routeLine) {
+      routeLine.setLatLngs(coords);
+    } else {
+      routeLine = L.polyline(coords, {
+        color: "#2563eb",
+        weight: 5,
+        opacity: 0.85,
+        lineCap: "round",
+        lineJoin: "round"
+      }).addTo(map);
+      routeLine.bringToBack();
+    }
+
+    document.getElementById("cardRouteDistance").textContent = distanceKm + " km";
+
+    lastRouteTechLat = techLat;
+    lastRouteTechLng = techLng;
+  } catch (err) {
+    console.warn("Routing error:", err);
+  } finally {
+    routeFetchBusy = false;
+  }
+}
+
+function clearRoute() {
+  if (routeLine) {
+    map.removeLayer(routeLine);
+    routeLine = null;
+  }
+  lastRouteTechLat = null;
+  lastRouteTechLng = null;
+  document.getElementById("cardRouteDistance").textContent = "—";
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FETCH
+// ═══════════════════════════════════════════════════════════════
+async function fetchLocation() {
+  if (!TOKEN || finalised) return;
+  try {
+    const url = CONFIG.azureFunctionUrl + "?token=" + encodeURIComponent(TOKEN);
+    const res  = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+      if (res.status === 404) { handleUnavailable(); return; }
+      setStatus("loading", "Retrying connection…");
+      return;
+    }
+    const data = await res.json();
+    processData(data);
+  } catch (err) {
+    console.warn("Tracking fetch error:", err);
+    setStatus("loading", "Connection issue — retrying…");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROCESS DATA
+// ═══════════════════════════════════════════════════════════════
+function processData(data) {
+  const status = parseInt(data.Status, 10);
+
+  if (data.workOrderName) document.getElementById("cardWO").textContent = data.workOrderName;
+
+  if (data.TechnicianName) {
+    document.getElementById("cardTechName").textContent = data.TechnicianName;
+  }
+  document.getElementById("cardTechMobile").textContent = data.TechnicianMobile || "—";
+
+  placeCustomerMarker(data);
+
+  const now = new Date();
+  const ts = data.lastUpdated ? new Date(data.lastUpdated) : now;
+  document.getElementById("cardUpdated").textContent = ts.toLocaleTimeString("en-IN", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true
+  });
+
+  if (status === STATUS.TRAVELLING) { wasLive = true; handleTravelling(data); return; }
+
+  if (status === STATUS.IN_PROGRESS) {
+    stopPolling(); finalised = true;
+    clearRoute();
+    if (wasLive) {
+      showMap();
+      document.getElementById("arrivedOverlay").classList.add("show");
+    } else {
+      showMessage("🛠️","Technician Has Arrived",
+        "Your technician is already at the service location and working on your request.",
+        "In Progress","green");
+    }
+    setStatus("arrived","Technician is at your location");
+    document.getElementById("cardStatus").textContent = "In Progress";
+    document.getElementById("cardStatus").className   = "card-value green";
+    return;
+  }
+
+  if (status === STATUS.COMPLETED) {
+    stopPolling(); finalised = true;
+    clearRoute();
+    showMessage("✅","Visit Completed",
+      "Your service visit has been completed successfully. Thank you for choosing VNETIX Field Service.",
+      "Completed","green");
+    setStatus("completed","This visit has been completed");
+    document.getElementById("cardStatus").textContent = "Completed";
+    document.getElementById("cardStatus").className   = "card-value green";
+    return;
+  }
+
+  if (status === STATUS.REVISIT_REQUESTED) {
+    stopPolling(); finalised = true;
+    clearRoute();
+    showMessage("🔄","Revisit Scheduled",
+      "A revisit has been requested for this service. Our team will contact you to schedule a new appointment.",
+      "Revisit Requested","grey");
+    setStatus("unavailable","Revisit has been requested");
+    document.getElementById("cardStatus").textContent = "Revisit Requested";
+    document.getElementById("cardStatus").className   = "card-value amber";
+    return;
+  }
+
+  showMessage("⏳","Not Started Yet",
+    "Tracking will become available once your technician starts travelling to your location. Please check back soon.",
+    null,null);
+  setStatus("loading","Waiting for technician to start travelling…");
+  document.getElementById("cardStatus").textContent = "Pending";
+  document.getElementById("cardStatus").className   = "card-value amber";
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TRAVELLING
+// ═══════════════════════════════════════════════════════════════
+function handleTravelling(data) {
+  const lat = parseFloat(data.Latitude);
+  const lng = parseFloat(data.Longitude);
+
+  if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) {
+    showMap();
+    setStatus("loading","Technician is on the way — getting GPS fix…");
+    document.getElementById("cardStatus").textContent = "En Route";
+    document.getElementById("cardStatus").className   = "card-value amber";
+    return;
+  }
+
+  showMap();
+
+  if (techMarker) {
+    techMarker.setLatLng([lat, lng]);
+  } else {
+    techMarker = L.marker([lat, lng], { icon: techIcon, zIndexOffset: 1000 })
+      .addTo(map)
+      .bindPopup("<b>Your Technician</b><br/>Live position");
+  }
+
+  if (!mapCentred) {
+    if (custPlaced && custMarker) {
+      map.fitBounds(L.latLngBounds([techMarker.getLatLng(), custMarker.getLatLng()]), { padding: [50, 50] });
+    } else {
+      map.setView([lat, lng], 15, { animate: true });
+    }
+    mapCentred = true;
+  } else {
+    map.panTo([lat, lng], { animate: true, duration: 0.8 });
+  }
+
+  // Recalculate the shortest route from technician to customer, if
+  // the customer location is known.
+  if (custPlaced && custMarker) {
+    const custLatLng = custMarker.getLatLng();
+    updateRoute(lat, lng, custLatLng.lat, custLatLng.lng);
+  }
+
+  setStatus("traveling","Technician is on the way to you");
+  document.getElementById("cardStatus").textContent = "En Route";
+  document.getElementById("cardStatus").className   = "card-value blue";
+  document.getElementById("statusRight").textContent = lat.toFixed(5) + ", " + lng.toFixed(5);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  UNAVAILABLE
+// ═══════════════════════════════════════════════════════════════
+function handleUnavailable() {
+  stopPolling(); finalised = true;
+  clearRoute();
+  showMessage("🔗","Link Not Found",
+    "This tracking link is invalid or has expired. Please use the link provided in your service confirmation email.",
+    null,null);
+  setStatus("expired","This tracking link is not valid");
+  document.getElementById("cardStatus").textContent = "Invalid Link";
+  document.getElementById("cardStatus").className   = "card-value red";
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
+function setStatus(type, text) {
+  document.getElementById("statusBar").className    = "status-bar " + type;
+  document.getElementById("statusText").textContent = text;
+}
+
+function startPolling() {
+  fetchLocation();
+  pollTimer = setInterval(fetchLocation, CONFIG.pollIntervalMs);
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════════════════════════
+if (!TOKEN) {
+  handleUnavailable();
+} else {
+  document.getElementById("map").style.display = "none";
+  startPolling();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && TOKEN && !finalised) {
+    stopPolling(); startPolling();
+  } else if (document.visibilityState === "hidden") {
+    stopPolling();
+  }
+});
+</script>
+</body>
+</html>
